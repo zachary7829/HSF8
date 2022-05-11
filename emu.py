@@ -1,6 +1,7 @@
 #Thanks to ttom795's open source Chippure emulator, I observed some code there to get a better understanding of what I need to do
 #also, thanks to https://www.freecodecamp.org/news/creating-your-very-own-chip-8-emulator/, great reference
-#+, thanks to r/EmuDev discord, more specifically calc84maniac#7184, I spent 5 hours trying to figure out why sprite draw didn't work only to figure out it was a one line indentation error :P
+#Tested Working: Pong, Tetris, IBM, Space Invaders, Flight Runner, snake, pumpkindressup, glitchGhost
+#Boots, but problems: br8kout, Tictac
 from tkinter import *
 import math
 import time
@@ -14,18 +15,18 @@ rows = 32
 scale = 4
 
 screen = Tk()
-screen.title('Test with screens')
+screen.title('HSF8 by zachary7829')
 screen.geometry(str(cols*scale)+'x'+str(rows*scale))
 screen.config(bg='#000000')
 
 canvas = Canvas(screen,bg="#000000")
+canvas.pack()
 
 keypressed = None
 
 def inputEventDown(event):
   global cycle
   global keypressed
-  #print("keypress")
   keys = {
     "1":0x1,
     "2":0x2,
@@ -34,46 +35,62 @@ def inputEventDown(event):
     "q":0x4,
     "w":0x5,
     "e":0x6,
-    "r":0xD
+    "r":0xD,
+    "a":0x7,
+    "s":0x8,
+    "d":0x9,
+    "f":0xE,
+    "z":0xA,
+    "x":0x0,
+    "c":0xB,
+    "v":0xF
   }
-  if event.char == " ":
-    if cycle:
-      cycle = False
-    else:
-      cycle = True
-      emuloop()
-  elif keys[event.char]:
+  if event.char in keys:
     keypressed = keys[event.char]
-    print(keypressed)
+  if cycle:
+    if event.char == " ":
+      cycle = False #press space to force pause
+  else:
+    cycle = True
+    emuloop()
 
 def inputEventUp(event):
-  global cycle
   global keypressed
-  keys = {
-    "1":0x1,
-    "2":0x2,
-    "3":0x3,
-    "4":0xc,
-    "q":0x4,
-    "w":0x5,
-    "e":0x6,
-    "r":0xD
-  }
-  if keys[event.char] == keypressed:
-    keypressed = None
-    print("keyup")
+  keypressed = None
 
-def drawPixel(x, y): #col is x row is y
-  canvas.create_rectangle(
-    x*scale, y*scale, (x*scale)+scale, (y*scale)+scale,
-    fill="white",
-    tag="squa"
-    )
-  canvas.pack()
-  screen.update()
-
-def cls():
+def refreshDisplay():
+  global display
+  global cols
+  global rows
+  global scale
   canvas.delete('all')
+  for i in range(cols*rows):
+    if display[i] == 1:
+      x = (i%cols)
+      y = math.floor(i/cols)
+      canvas.create_rectangle(
+        x*scale, y*scale, (x*scale)+scale, (y*scale)+scale,
+        fill="white",
+        width=0
+      )
+  
+def drawPixel(x, y): #col is x row is y
+  global display
+  global cols
+  global rows
+  #if attempting to draw pixel outside display bounds, wrap around
+  while x >= cols:
+    x -= cols
+  while x < 0:
+    x += cols
+  while y >= rows:
+    y -= rows
+  while y < 0:
+    y += rows
+
+  pixelLoc = x + (y * cols)
+  display[pixelLoc] ^= 1 #XOR, handle whether to erase or draw pixel
+  return not display[pixelLoc]
   
 def excopcode(opcode):
   global pc
@@ -81,6 +98,12 @@ def excopcode(opcode):
   global v
   global selfi
   global cycle
+  global delayTimer
+  global soundTimer
+  global keypressed
+  global display
+  global cols
+  global rows
   pc += 2
 
   x = (opcode & 0x0F00) >> 8
@@ -97,11 +120,21 @@ def excopcode(opcode):
   print("executing " + str(hex(opcode)))
   if code == 0x0000:
     if opcode == 0x00E0: #cls
-      cls()
-      print("cleared screen" + str(hex(opcode)) + str(opcode))
-    if opcode == 0x00EE: #return (pop from stack, store in pc)
+      display = [0 for i in range(cols*rows)]
+      #print("cleared screen" + str(hex(opcode)))
+            
+    elif opcode == 0x00EE: #return (pop from stack, store in pc)
       pc = stack.pop()
-      print("popped")
+      #print("popped")
+      
+    elif opcode == 0x0200: #HI-RES CHIP-8 (four-page display)
+      display = [0 for i in range(cols*rows)]
+      #print("cleared screen" + str(hex(opcode)))
+            
+    elif opcode == 0x0230: #Two-page display for CHIP-8 support
+      display = [0 for i in range(cols*rows)]
+      #print("cleared screen" + str(hex(opcode)))
+      
   elif code == 0x1000: #JP addr
     #0xFFF is nnn,
     #ex 0x1426 & 0xFFF would give us 0x426 for 0xFFF
@@ -126,12 +159,13 @@ def excopcode(opcode):
     if v[x] == v[y]:
       pc += 2
 
-  elif code == 0x6000: #LD Vx, byte
+  elif code == 0x6000:
     v[x] = kk
     
   
-  elif code == 0x7000: #ADD Vx, byte
-    v[x] += kk
+  elif code == 0x7000:
+    #v[x] += kk #BAD OPCODE
+    v[x] = (v[x]+kk)&0xFF
 
   elif code == 0x8000:
     e = (opcode & 0xF)
@@ -144,27 +178,26 @@ def excopcode(opcode):
     elif e == 0x3:
       v[x] ^= v[y]
     elif e == 0x4:
-      sum = v[x] + v[y]
-      v[0xF] = 0
-      if sum > 0xFF:
-        v[0xF] = 1;
-      v[x] = sum
+      temp = v[x] + v[y]
+      v[0xF] = int(temp > 0xFF)
+      v[x] = temp & 0xFF
+
     elif e == 0x5:
-      v[0xF] = 0
-      if (v[x] > v[y]):
-        v[0xF] = 1
-      v[x] -= v[y]
+      v[0xF] = int(v[x] > v[y])
+      v[x] = (v[x]-v[y])&0xFF
     elif e == 0x6:
-      v[0xF] = (v[x] & 0x1)
-      v[x] >>= 1
+      '''v[0xF] = (v[x] & 0x1)
+      v[x] >>= 1'''
+      temp = v[x] & 0x1
+      v[x] = (v[x] >> 1)&0xFF
+      v[0xF] = temp
     elif e == 0x7:
-      v[0xF] = 0
-      if (v[y] > v[x]):
-        v[0xF] = 1
-      v[x] = v[y] - v[x]
+      v[0xF] = int(v[y] > v[x])
+      v[x] = (v[y]-v[x])&0xFF
     elif e == 0xE:
-      v[0xF] = (v[x] & 0x80)
-      v[x] <<= 1
+      temp = (v[x]%0x80)>>7
+      v[x] = (v[x]<<0x1)&0xFF
+      v[0xF] = temp
       
   elif code == 0x9000:
     if v[x] != v[y]:
@@ -180,9 +213,9 @@ def excopcode(opcode):
     rand = random.randint(0, 255)
     v[x] = rand & (opcode & 0xFF)
     
-  elif code == 0xD000: #DRW Vx, Vy, nibble
+  elif code == 0xD000:
     width = 8
-    height = (opcode & 0xF)
+    height = opcode & 0x000F
     v[0xF] = 0
     for row in range(height):
       sprite = memory[selfi+row]
@@ -204,7 +237,13 @@ def excopcode(opcode):
     if kk == 0x0A:
       cycle = False
       print("paused by 0x0A")
-    elif kk == 0x1E: #LD Vx, DT
+    elif kk == 0x07:
+      v[x] = delayTimer
+    elif kk == 0x15:
+      delayTimer = v[x]
+    elif kk == 0x18:
+      soundTimer = v[x]
+    elif kk == 0x1E:
       selfi += v[x]
     elif kk == 0x29:
       selfi = v[x]*0x5
@@ -223,18 +262,31 @@ def excopcode(opcode):
         v[registerIndex] = memory[selfi + registerIndex]
         registerIndex += 1
   else:
-    print("unknown opcode: "+ opcode)
+    print("unknown opcode: "+ str(hex(opcode)))
+    cycle = False
 
 def emuloop():
   global cycle
+  global delayTimer
+  global soundTimer
+  global screen
   while cycle:
-    daopcode = memory[pc] << 8 | memory[pc+1]
-    print(pc)
-    excopcode(daopcode)
+    for i in range(10):
+      if cycle:
+        daopcode = memory[pc] << 8 | memory[pc+1]
+        #print(pc)
+        excopcode(daopcode)
+    if delayTimer > 0:
+        delayTimer -= 1
+    if soundTimer > 0:
+        print ('\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a')
+        soundTimer -= 1
+    refreshDisplay()
+    screen.update()
+    
 
 memory = [0x0 for i in range(4096)]
 filename = input("Input rom name: ") + ".ch8"
-#filename = "invaders.ch8"
 dafile = open(filename, 'rb')
 program = dafile.read()
 dafile.close()
@@ -244,7 +296,31 @@ v = [0x0 for i in range(16)] # 16 8-bit registers
 selfi = 0 #Stores memory addresses. Set this to 0 since we aren't storing anything at initialization.
 cycle = True
 screen.bind('<Key>',inputEventDown)
+screen.bind('<KeyPress>',inputEventDown)
 screen.bind('<KeyRelease>',inputEventUp)
+delayTimer = 0
+soundTimer = 0
+display = [0 for i in range(cols*rows)]
+sprites = [
+        0xF0, 0x90, 0x90, 0x90, 0xF0,
+        0x20, 0x60, 0x20, 0x20, 0x70,
+        0xF0, 0x10, 0xF0, 0x80, 0xF0,
+        0xF0, 0x10, 0xF0, 0x10, 0xF0,
+        0x90, 0x90, 0xF0, 0x10, 0x10,
+        0xF0, 0x80, 0xF0, 0x10, 0xF0,
+        0xF0, 0x80, 0xF0, 0x90, 0xF0,
+        0xF0, 0x10, 0x20, 0x40, 0x40,
+        0xF0, 0x90, 0xF0, 0x90, 0xF0,
+        0xF0, 0x90, 0xF0, 0x10, 0xF0,
+        0xF0, 0x90, 0xF0, 0x90, 0x90,
+        0xE0, 0x90, 0xE0, 0x90, 0xE0,
+        0xF0, 0x80, 0x80, 0x80, 0xF0,
+        0xE0, 0x90, 0x90, 0x90, 0xE0,
+        0xF0, 0x80, 0xF0, 0x80, 0xF0,
+        0xF0, 0x80, 0xF0, 0x80, 0x80
+]
+for i in range(len(sprites)):
+  memory[i] = sprites[i]
 for i in range(len(program)):
   memory[0x200+i] = program[i]
 emuloop()
