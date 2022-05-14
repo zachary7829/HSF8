@@ -1,7 +1,7 @@
-#Thanks to ttom795's open source Chippure emulator, I observed some code there to get a better understanding of what I need to do
-#also, thanks to https://www.freecodecamp.org/news/creating-your-very-own-chip-8-emulator/, great reference
-#Tested Working: Pong, Tetris, IBM, Space Invaders, Flight Runner, snake, pumpkindressup, glitchGhost
+#Thanks to https://www.freecodecamp.org/news/creating-your-very-own-chip-8-emulator/, great reference
+#Tested Working: Tetris, IBM, Space Invaders, Flight Runner, snake, pumpkindressup, glitchGhost, Pong (sometimes)
 #Boots, but problems: br8kout, Tictac
+#+, thanks to r/EmuDev discord, more specifically calc84maniac#7184, I spent 5 hours trying to figure out why sprite draw didn't work only to figure out it was a one line indentation error :P
 from tkinter import *
 import math
 import time
@@ -110,9 +110,9 @@ def excopcode(opcode):
   #x - A 4-bit value, the lower 4 bits of the high byte of the instruction
   y = (opcode & 0x00F0) >> 4
   #y - A 4-bit value, the upper 4 bits of the low byte of the instruction
-  code = (opcode & 0xF000)
+  code = opcode & 0xF000
   #to check code without nnn
-  kk = (opcode & 0xFF)
+  kk = opcode & 0xFF
   #kk or byte - An 8-bit value, the lowest 8 bits of the instruction
 
   
@@ -141,11 +141,11 @@ def excopcode(opcode):
     #This SHOULD be pc = (opcode & 0xFFF)
     #However instead I'm going to make it stop the cycle since it will be an infinite loop without rendering anything, yeah I think something might be wrong with how I update my render but psh I'll get to that later
     #cycle = False
-    pc = (opcode & 0xFFF)
+    pc = opcode & 0xFFF
 
   elif code == 0x2000:
     stack.append(pc)
-    pc = (opcode & 0xFFF)
+    pc = opcode & 0xFFF
 
   elif code == 0x3000:
     if v[x] == kk:
@@ -271,6 +271,7 @@ def emuloop():
   global soundTimer
   global screen
   while cycle:
+    time.sleep(1/60)
     for i in range(10):
       if cycle:
         daopcode = memory[pc] << 8 | memory[pc+1]
